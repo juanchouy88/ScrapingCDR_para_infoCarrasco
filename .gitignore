@@ -1,0 +1,8 @@
+# Archivos de sistema y entorno
+__pycache__/
+*.pyc
+.env
+venv/
+.DS_Store
+.idea/
+.vscode/

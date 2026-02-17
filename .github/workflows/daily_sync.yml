@@ -1,0 +1,39 @@
+name: Sincronizador Diario CDR-WooCommerce
+
+on:
+  schedule:
+    # Ejecutar todos los días a las 09:00 UTC (06:00 AM Uruguay)
+    - cron: '0 9 * * *'
+  workflow_dispatch: # Permite ejecutar manualmente desde la web de GitHub
+
+jobs:
+  run-sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20 # Seguridad para evitar bucles infinitos
+
+    steps:
+      - name: 📥 Clonar repositorio
+        uses: actions/checkout@v3
+
+      - name: 🐍 Configurar Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: 📦 Instalar dependencias
+        run: |
+          pip install -r requirements.txt
+          playwright install chromium
+          playwright install-deps
+
+      - name: 🚀 Ejecutar Script Maestro
+        env:
+          # Inyectamos los secretos configurados en GitHub Settings
+          CDR_USER: ${{ secrets.CDR_USER }}
+          CDR_PASS: ${{ secrets.CDR_PASS }}
+          WOO_URL: ${{ secrets.WOO_URL }}
+          WOO_KEY: ${{ secrets.WOO_KEY }}
+          WOO_SECRET: ${{ secrets.WOO_SECRET }}
+          # Configuración de categorías (puedes editar esto aquí si cambia)
+          TARGET_URLS: '["https://www.cdrmedios.com/categoria-audio", "https://www.cdrmedios.com/categoria-video"]'
+        run: python main.py
