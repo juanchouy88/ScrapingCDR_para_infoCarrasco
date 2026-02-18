@@ -1,48 +1,27 @@
 name: Sincronizador Diario CDR-WooCommerce
-
 on:
   schedule:
-    # Ejecutar todos los días a las 09:00 UTC (06:00 AM Uruguay)
     - cron: '0 9 * * *'
-  workflow_dispatch: # Permite ejecutar manualmente desde la web de GitHub
-
+  workflow_dispatch:
 jobs:
   run-sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 20 # Seguridad para evitar bucles infinitos
-
     steps:
-      - name: 📥 Clonar repositorio
-        uses: actions/checkout@v3
-
-      - name: 🐍 Configurar Python
-        uses: actions/setup-python@v4
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-
-      - name: 📦 Instalar dependencias
-        run: |
+      - run: |
           pip install -r requirements.txt
           playwright install chromium
           playwright install-deps
-
-      - name: 🚀 Ejecutar Script Maestro
+      - name: 🚀 Ejecutar Script
         env:
-          # Inyectamos los secretos configurados en GitHub Settings
           CDR_USER: ${{ secrets.CDR_USER }}
           CDR_PASS: ${{ secrets.CDR_PASS }}
           WOO_URL: ${{ secrets.WOO_URL }}
           WOO_KEY: ${{ secrets.WOO_KEY }}
           WOO_SECRET: ${{ secrets.WOO_SECRET }}
-          # CORRECCIÓN: Ahora lee el secreto real de GitHub
+          # AQUÍ ESTABA EL ERROR: DEBE SER ASÍ PARA USAR TUS LINKS
           TARGET_URLS: ${{ secrets.TARGET_URLS }}
         run: python main.py
-
-      # Paso extra: Guarda capturas de pantalla si hay errores (útil para ver qué pasó)
-      - name: 📸 Guardar Capturas de Pantalla (Debug)
-        if: always() 
-        uses: actions/upload-artifact@v4
-        with:
-          name: screenshots-debug
-          path: "*.png"
-          retention-days: 5
