@@ -20,7 +20,7 @@ class WooManager:
         if not net_price:
             return 0
         try:
-            # Usamos las variables definidas en config.py
+            # Usamos las variables definidas en config.py (1.22 y 1.30)
             price_with_iva = float(net_price) * config.IVA_RATE
             final_price = price_with_iva * config.MARGIN_RATE
             return int(round(final_price, 0))
@@ -30,7 +30,8 @@ class WooManager:
 
     def get_category_id_by_name(self, name):
         """
-        Busca el ID de una categoría por su nombre (CORREGIDO para evitar errores)
+        Busca el ID de una categoría por su nombre.
+        Incluye protección contra respuestas inválidas de la API.
         """
         print(f"🔍 Buscando categoría '{name}' en WooCommerce...")
         try:
@@ -39,17 +40,22 @@ class WooManager:
             if res.status_code == 200:
                 cats = res.json()
                 
-                # --- CORRECCIÓN CRÍTICA ---
-                # Verificamos si la respuesta es realmente una Lista antes de leerla.
+                # 1. Verificamos si la respuesta es una lista
                 if isinstance(cats, list):
                     for c in cats:
-                        # Verificamos que el nombre coincida
+                        # --- CORRECCIÓN IMPORTANTE ---
+                        # Verificamos que el elemento sea un diccionario antes de leerlo.
+                        # Esto evita el error "string indices must be integers".
+                        if not isinstance(c, dict):
+                            continue 
+                        
+                        # Ahora seguro podemos preguntar por el nombre
                         if c.get("name", "").lower() == name.lower():
                             return c["id"]
-                    print(f"⚠️ Categoría '{name}' no encontrada en la búsqueda.")
+                            
+                    print(f"⚠️ Categoría '{name}' no encontrada (revisado {len(cats)} resultados).")
                     return None
                 else:
-                    # Si Woo devuelve un diccionario (error), lo mostramos y no rompemos el script
                     print(f"⚠️ Respuesta inesperada de Woo (No es lista): {cats}")
                     return None
             else:
@@ -89,7 +95,8 @@ class WooManager:
                 # Seguridad: Verificar que data sea lista
                 if isinstance(data, list):
                     for p in data:
-                        if p.get("sku"):
+                        # Validación extra: que sea diccionario y tenga SKU
+                        if isinstance(p, dict) and p.get("sku"):
                             products_map[p["sku"]] = p
                 else:
                     print(f"Error: La API devolvió datos inválidos en página {page}")
@@ -136,7 +143,6 @@ class WooManager:
             if existing_product:
                 # --- ACTUALIZAR ---
                 pid = existing_product['id']
-                # Actualizamos precio, stock y estado
                 self.wcapi.put(f"products/{pid}", payload)
                 # print(f"🔄 Actualizado: {sku}")
             else:
