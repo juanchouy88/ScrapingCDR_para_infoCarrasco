@@ -2,6 +2,7 @@ from playwright.sync_api import sync_playwright, Page
 import time
 import os
 import config
+import uuid
 
 class CDRScraper:
     def __init__(self, headless=True):
@@ -97,75 +98,132 @@ class CDRScraper:
         
         print(f"Detected Category Name: {category_name}")
         
-        all_products = []
+        product_urls = []
         
+        # 1. Collect all product URLs
         while True:
-            # Extract products on current page
-            items = self.page.locator("article.prod_item").all()
-            print(f"Found {len(items)} items on current page.")
+            # Extract product links on current page
+            # Assuming product links are inside "article.prod_item"
+            items = self.page.locator("article.prod_item")
+            count = items.count()
+            print(f"Found {count} items on page to collect links.")
             
-            for item in items:
+            for i in range(count):
                 try:
-                    product = {}
-                    
-                    # SKU
-                    sku_elem = item.locator(".prodcod [itemprop='sku']")
-                    if sku_elem.count() > 0:
-                        product['sku'] = sku_elem.inner_text().strip()
-                    else:
-                        print("Skipping item without SKU")
-                        continue
-                        
-                    # Title
-                    name_elem = item.locator("[itemprop='name']")
-                    if name_elem.count() > 0:
-                        product['name'] = name_elem.inner_text().strip()
-                    
-                    # Price (Net)
-                    price_elem = item.locator("span[itemprop='price']")
-                    if price_elem.count() > 0:
-                        # Try content attribute first, then text
-                        price_val = price_elem.get_attribute("content")
-                        if not price_val:
-                            price_val = price_elem.inner_text().strip()
-                        
-                        # Clean price
-                        price_val = ''.join(filter(str.isdigit, price_val))
-                        product['net_price'] = int(price_val) if price_val else 0
-                    
-                    # Stock status
-                    product['in_stock'] = item.locator(".enstock").count() > 0
-                    
-                    # Image
-                    img_elem = item.locator("img[itemprop='image']")
-                    if img_elem.count() > 0:
-                        src = img_elem.get_attribute("src")
-                        if src and not src.startswith('http'):
-                            src = "https://www.cdrmedios.com" + src
-                        product['image_url'] = src
-                        
-                    # Description
-                    desc_elem = item.locator("[itemprop='description']")
-                    if desc_elem.count() > 0:
-                        product['description'] = desc_elem.inner_text().strip()
-                    
-                    all_products.append(product)
-                    
+                    # Finds the first <a> inside the product article
+                    link_el = items.nth(i).locator("a").first
+                    if link_el.count() > 0:
+                        link = link_el.get_attribute("href")
+                        if link:
+                            if not link.startswith('http'):
+                                link = "https://www.cdrmedios.com" + link
+                            if link not in product_urls:
+                                product_urls.append(link)
                 except Exception as e:
-                    print(f"Error extracting item: {e}")
+                    print(f"Error extracting link: {e}")
             
             # Pagination
             next_btn = self.page.locator(".siguiente a")
             if next_btn.count() > 0 and next_btn.is_visible():
-                print("Navigating to next page...")
+                print("Navigating to next page for links...")
                 next_btn.click()
                 self.page.wait_for_load_state('networkidle')
-                time.sleep(2) # Polite wait
+                time.sleep(2)
             else:
-                print("No more pages.")
                 break
+        
+        print(f"Collected {len(product_urls)} product URLs. Starting detail scraping...")
+        
+        products_data = []
+        
+        # 2. Visit each product page
+        for link in product_urls:
+            try:
+                self.page.goto(link)
+                self.page.wait_for_load_state('domcontentloaded')
                 
-        return category_name, all_products
+                product = {}
+                
+                # Name: h1
+                if self.page.locator("h1").count() > 0:
+                    product['name'] = self.page.locator("h1").first.inner_text().strip()
+                else:
+                    product['name'] = "Unknown Product"
+
+                # SKU
+                # Search for specific text "Código"
+                sku = "N/A"
+                try:
+                    # Look for element containing "Código"
+                    sku_elem = self.page.locator("*:has-text('Código')").last
+                    if sku_elem.count() > 0:
+                        text = sku_elem.inner_text()
+                        # Extract text after "Código"
+                        # Example: "Código: 12345"
+                        if "Código" in text:
+                            sku = text.split("Código")[-1].replace(":", "").strip()
+                except:
+                    pass
+                
+                if not sku or len(sku) < 2 or " " in sku: # Basic validation
+                     sku = f"TEMP-{uuid.uuid4().hex[:8]}"
+                product['sku'] = sku
+
+                # MPN - CRITICAL
+                mpn = "N/A"
+                mpn_loc = self.page.locator("tr:has-text('Nro de parte') .data span").first
+                if mpn_loc.count() > 0:
+                    mpn = mpn_loc.inner_text().strip()
+                product['mpn'] = mpn
+                
+                # Price
+                price_val = 0
+                price_loc = self.page.locator(".product-price")
+                if price_loc.count() == 0:
+                     price_loc = self.page.locator(".price-value-2")
+                
+                if price_loc.count() > 0:
+                    p_text = price_loc.first.inner_text()
+                    # Clean: USD, $, ,
+                    p_clean = p_text.replace("USD", "").replace("$", "").replace(",", "").strip()
+                    # Filter digits
+                    p_clean = ''.join(filter(str.isdigit, p_clean))
+                    if p_clean:
+                        price_val = int(p_clean)
+                product['net_price'] = price_val
+                    
+                # Stock
+                in_stock = True
+                if self.page.get_by_text("Sin Stock").count() > 0:
+                    in_stock = False
+                product['in_stock'] = in_stock
+                
+                # Image
+                img_url = ""
+                img_loc = self.page.locator(".gallery .picture img").first
+                if img_loc.count() == 0:
+                     img_loc = self.page.locator("#main-product-img").first
+                
+                if img_loc.count() > 0:
+                    src = img_loc.get_attribute("src")
+                    if src:
+                        if not src.startswith('http'):
+                            img_url = "https://www.cdrmedios.com" + src
+                        else:
+                            img_url = src
+                product['image_url'] = img_url
+                
+                # Description (keeping as optional/name for now as logic wasn't specified but good to have)
+                product['description'] = product['name']
+
+                print(f"✅ Leído: {product['sku']} | MPN: {product['mpn']} | $ {product['net_price']}")
+                products_data.append(product)
+                    
+            except Exception as e:
+                print(f"❌ Error scraping {link}: {e}")
+                continue
+                
+        return category_name, products_data
 
 if __name__ == "__main__":
     scraper = CDRScraper(headless=True)
