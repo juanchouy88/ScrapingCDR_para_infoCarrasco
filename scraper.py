@@ -46,7 +46,7 @@ class CDRScraper:
         items = self.page.locator("article.prod_item a").all()
         for item in items:
             href = item.get_attribute("href")
-            if href:
+            if href and not href.startswith("javascript:") and not href.startswith("#"):
                 full_url = "https://www.cdrmedios.com" + href if not href.startswith("http") else href
                 if full_url not in product_urls: product_urls.append(full_url)
         
