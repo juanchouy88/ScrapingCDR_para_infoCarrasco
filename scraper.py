@@ -39,8 +39,13 @@ class CDRScraper:
 
     def scrape_category(self, url):
         print(f"🔎 Accediendo a categoría: {url}")
-        self.page.goto(url, wait_until="domcontentloaded")
-        time.sleep(2)
+        try:
+            self.page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            time.sleep(2)
+        except Exception as e:
+            print(f"❌ Error al cargar la categoría {url}: {e}")
+            return "Error", []
+
         category_name = self.page.title().split("-")[0].strip()
         
         product_urls = []
@@ -50,76 +55,100 @@ class CDRScraper:
         for item in items:
             href = item.get_attribute("href")
             
-            # FILTRO CRÍTICO: Evitamos funciones de JavaScript que rompen el script
-            if not href or "javascript" in href or "carrito" in href or href == "#":
+            # FILTRO ESTRICTO: Ignoramos javascript, vacíos, o rutas sin /catalogo/
+            if not href or "javascript" in href.lower() or "/catalogo/" not in href:
                 continue
                 
-            # Construcción segura de la URL completa
+            # Construcción segura de la URL absoluta
             if href.startswith("http"):
                 full_url = href
             else:
+                # Aseguramos que la ruta relativa empiece con /
                 clean_href = href if href.startswith("/") else f"/{href}"
                 full_url = f"https://www.cdrmedios.com{clean_href}"
             
+            # Validación final de URL
             if full_url not in product_urls: 
                 product_urls.append(full_url)
         
         products_data = []
-        # Procesamos las primeras 20 fichas (puedes aumentar este número después)
-        for link in product_urls[:20]:
+        print(f"✅ Se encontraron {len(product_urls)} productos en la categoría.")
+
+        # Procesamos los productos encontrados
+        for link in product_urls:
             try:
                 print(f"🔗 Procesando ficha: {link}")
-                self.page.goto(link, wait_until="domcontentloaded", timeout=20000)
+                self.page.goto(link, wait_until="domcontentloaded", timeout=30000)
                 
+                # Esperar a que la tabla técnica esté presente para asegurar carga
+                try:
+                    self.page.wait_for_selector(".ficha_tecnica", timeout=10000)
+                except:
+                    print(f"⚠️ Tabla técnica no detectada en {link}, intentando leer igual...")
+
                 # 1. Extracción de SKU (EQU1177, etc.)
                 sku = ""
+                # Selector específico para la fila 'Código'
                 sku_loc = self.page.locator("tr:has-text('Código') .data span").first
                 if sku_loc.count() > 0:
                     sku = sku_loc.inner_text().strip()
                 
+                # SI NO HAY SKU, SALTAMOS EL PRODUCTO (Evita SKUs fake/temp)
                 if not sku:
-                    print(f"⚠️ Sin SKU en {link}, saltando...")
+                    print(f"⚠️ NO SE ENCONTRÓ SKU VÁLIDO en {link}. Saltando...")
                     continue
 
-                # 2. Extracción de Precio (USD 920)
+                # 2. Extracción de MPN (Nro de parte)
+                mpn = "N/A"
+                mpn_loc = self.page.locator("tr:has-text('Nro de parte') .data span").first
+                if mpn_loc.count() > 0:
+                    mpn = mpn_loc.inner_text().strip()
+
+                # 3. Extracción de Precio
                 price = 0.0
                 try:
-                    # Probamos múltiples selectores incluyendo el .pprecio que vimos en el inspector
                     price_loc = self.page.locator(".pprecio, span[itemprop='price'], .price-value-2").first
-                    price_loc.wait_for(state="visible", timeout=7000)
-                    p_text = price_loc.inner_text()
-                    # Limpiamos: dejamos solo números y puntos
-                    price_clean = "".join(c for c in p_text if c.isdigit() or c == ".").replace(",", ".")
-                    price = float(price_clean)
+                    if price_loc.is_visible():
+                        p_text = price_loc.inner_text()
+                        price_clean = "".join(c for c in p_text if c.isdigit() or c == ".").replace(",", ".")
+                        price = float(price_clean)
                 except Exception:
-                    print(f"❌ No se detectó precio para {sku}. Saltando producto.")
-                    continue
+                    pass # Si falla precio, queda en 0.0
 
-                # 3. Detección de Stock (Botón Comprar)
-                # Si existe el botón de compra y no hay carteles de "Sin Stock", hay existencias
-                btn_comprar = self.page.locator("button:has-text('COMPRAR'), .btn-comprar, .buy-button").first
+                # 4. Detección de Stock MEJORADA
+                # Lógica: Botón comprar visible O indicador de stock > 0
+                btn_comprar = self.page.locator("button.btn_comprar, .btn-comprar, button:has-text('COMPRAR')").first
+                
+                # A veces el sitio usa un input hidden o un div con la cantidad
+                # Buscamos si hay un indicador explícito de "Sin Stock"
                 msg_sin_stock = self.page.get_by_text("Sin Stock", exact=False)
                 
-                has_stock = (btn_comprar.count() > 0 and btn_comprar.is_visible()) and \
-                            (msg_sin_stock.count() == 0 or not msg_sin_stock.first.is_visible())
+                # Determinamos stock
+                is_buyable = btn_comprar.count() > 0 and btn_comprar.is_visible()
+                has_no_stock_msg = msg_sin_stock.count() > 0 and msg_sin_stock.first.is_visible()
+                
+                has_stock = is_buyable and not has_no_stock_msg
 
-                # 4. Otros datos (Nombre, Imagen, MPN)
-                name = self.page.locator("h1").first.inner_text().strip()
+                # 5. Otros datos
+                name_loc = self.page.locator("h1").first
+                name = name_loc.inner_text().strip() if name_loc.count() > 0 else "Sin Nombre"
+                
                 image_loc = self.page.locator(".gallery img, .product-main-image img").first
                 image_url = image_loc.get_attribute("src") if image_loc.count() > 0 else ""
 
+                # Agregar producto validado
                 products_data.append({
                     'name': name,
                     'sku': sku,
-                    'mpn': "N/A",
+                    'mpn': mpn,
                     'net_price': price,
                     'in_stock': has_stock,
                     'image_url': image_url
                 })
-                print(f"✅ {sku} | Stock: {has_stock} | Precio Base: ${price}")
+                print(f"   -> SKU: {sku} | MPN: {mpn} | Stock: {has_stock} | ${price}")
 
             except Exception as e:
-                print(f"❌ Error crítico en ficha {link}: {e}")
+                print(f"❌ Error procesando {link}: {e}")
                 continue
                 
         return category_name, products_data
