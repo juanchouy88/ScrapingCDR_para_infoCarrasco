@@ -2,7 +2,6 @@ from playwright.sync_api import sync_playwright
 import time
 import os
 import random
-import re
 import config
 
 class CDRScraper:
@@ -69,7 +68,7 @@ class CDRScraper:
             href = item.get_attribute("href")
             
             # FILTRO ESTRICTO: Ignorar javascript:, updown_carrito, y #
-            if not href or "javascript:" in href.lower() or "updown_carrito" in href.lower() or "#" in href:
+            if not href or "javascript" in href.lower() or "updown_carrito" in href.lower() or "#" in href:
                 continue
             if "/catalogo/" not in href:
                 continue
@@ -100,7 +99,6 @@ class CDRScraper:
                     self.page.wait_for_selector(".ficha_tecnica, .gendata", timeout=15000)
                 except Exception as net_e:
                     print(f"⚠️ Error de red o Timeout al cargar {link}: {net_e}")
-                    # Retornamos error=True para que woo_manager lo salte
                     products_data.append({
                         'error': True,
                         'url': link
@@ -110,8 +108,6 @@ class CDRScraper:
                 sku = ""
                 mpn = "N/A"
                 
-                # Extracción de SKU y MPN desde .gendata
-                # Buscar fila donde contenga "Código"
                 sku_loc = self.page.locator(".gendata tr:has-text('Código') .data span, .gendata tr:has-text('Código') td:nth-child(2)").first
                 if sku_loc.count() > 0:
                     sku = sku_loc.inner_text().strip()
@@ -120,42 +116,44 @@ class CDRScraper:
                 if mpn_loc.count() > 0:
                     mpn = mpn_loc.inner_text().strip()
                 
-                # REGLA ORO: Si no hay Código (SKU), se ignora el producto. Prohibido usar TEMP-
                 if not sku:
                     print(f"⚠️ NO SE ENCONTRÓ SKU VÁLIDO en {link}. Saltando...")
                     continue
 
-                # Extracción de Precio
+                # Extracción de Precio con limpieza estricta
                 price = 0.0
                 try:
                     price_loc = self.page.locator(".pprecio, span[itemprop='price'], .price-value-2").first
                     if price_loc.is_visible():
-                        p_text = price_loc.inner_text()
-                        # Limpiar usd, $, espacios, comas
-                        p_clean = re.sub(r'[^\d,\.]', '', p_text).replace(',', '.')
-                        # En caso de múltiples puntos
+                        p_text = price_loc.inner_text().strip()
+                        # Limpieza estricta: eliminar USD, U$S, $, coma y espacios
+                        p_clean = p_text.upper().replace("USD", "").replace("U$S", "").replace("$", "").replace(",", "").strip()
+                        # Extraer solo numeros y punto decimal
+                        p_clean = ''.join(c for c in p_clean if c.isdigit() or c == '.')
+                        
+                        # En caso de múltiples puntos, conservar el último si funciona como decimal, 
+                        # pero si el formato es solo números, lo parseamos directo.
                         parts = p_clean.split('.')
                         if len(parts) > 2:
                             p_clean = ''.join(parts[:-1]) + '.' + parts[-1]
+                            
                         price = float(p_clean) if p_clean else 0.0
                 except Exception:
                     price = 0.0
 
-                # Detección de Stock: Solo 'Sin Stock' visible pone en False
                 msg_sin_stock = self.page.get_by_text("Sin Stock", exact=False)
                 has_no_stock_msg = msg_sin_stock.count() > 0 and msg_sin_stock.first.is_visible()
                 has_stock = not has_no_stock_msg
 
-                # Otros datos
                 name_loc = self.page.locator("h1").first
                 name = name_loc.inner_text().strip() if name_loc.count() > 0 else "Sin Nombre"
                 
-                # Imágenes
+                # Sistema de Respaldo de Imágenes (Fallback)
                 image_url = ""
                 img_selectors = [
                     ".gallery .picture img",
                     "#main-product-img",
-                    "div.product-essential img",
+                    ".product-essential img",
                     ".ficha_tecnica img",
                     ".product-main-image img"
                 ]
@@ -164,6 +162,9 @@ class CDRScraper:
                     if img_loc.count() > 0 and img_loc.is_visible():
                         src = img_loc.get_attribute("src")
                         if src:
+                            # Asegurar que la URL sea absoluta
+                            if not src.startswith("http"):
+                                src = f"https://www.cdrmedios.com{src if src.startswith('/') else '/' + src}"
                             image_url = src
                             break
 
