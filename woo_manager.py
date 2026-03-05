@@ -14,7 +14,7 @@ class WooManager:
     def calculate_price(self, net_price):
         if not net_price: return 0.0
         try:
-            # Fórmula estricta: float(net_price) * 1.22 * 1.30 y redondea a 0 decimales
+            # Fórmula estricta: (net_price * 1.22) * 1.30 y redondea a número entero
             price_with_iva = float(net_price) * 1.22
             final_price = price_with_iva * 1.30
             return round(final_price, 0)
@@ -61,10 +61,10 @@ class WooManager:
 
         image_url = scraped_data.get('image_url', '')
 
-        # Seguridad de Sincronización
-        if final_price_float < 10:
-            print(f"⚠️ Precio irreal ({final_price_float}) detectado en SKU {sku}. Saltando...")
-            return False, "Precio < 10"
+        # PROTECCIÓN DE TIENDA: Absurdos / Minimos
+        if final_price_float < 1.0 or final_price_float > 10000.0:
+            print(f"⚠️ Precio irreal detectado (${final_price_float}) en SKU {sku}. Difiere del neto de ${net_price}. Saltando sincronización de este producto.")
+            return False, "Error Precio"
             
         if not image_url:
             print(f"⚠️ Sin imagen detectada en SKU {sku}. Saltando para no romper la tienda...")
@@ -92,7 +92,8 @@ class WooManager:
                     payload["categories"] = [{"id": cid} for cid in scraped_data['category_ids']]
                 self.wcapi.post("products", payload)
             
-            print(f"✅ Sincronizado: {sku} | MPN: {mpn} | $ {final_price_str}")
+            # LOG QUIRÚRGICO EXIGIDO
+            print(f"✅ Sincronizado: {sku} | MPN: {mpn} | Neto: ${net_price} | Final: ${final_price_str}")
             return True, "Sincronizado"
         except Exception as e:
             print(f"❌ Error sincronizando {sku}: {e}")

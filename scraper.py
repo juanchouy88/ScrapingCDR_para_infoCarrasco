@@ -3,6 +3,7 @@ import time
 import os
 import random
 import config
+import re
 
 class CDRScraper:
     def __init__(self, headless=True):
@@ -120,25 +121,41 @@ class CDRScraper:
                     print(f"⚠️ NO SE ENCONTRÓ SKU VÁLIDO en {link}. Saltando...")
                     continue
 
-                # Extracción de Precio con limpieza estricta
+                # LIMPIEZA QUIRÚRGICA DE PRECIO
                 price = 0.0
                 try:
-                    price_loc = self.page.locator(".pprecio, span[itemprop='price'], .price-value-2").first
+                    price_loc = self.page.locator(".product-price, .price-value-2, .pprecio, span[itemprop='price']").first
                     if price_loc.is_visible():
                         p_text = price_loc.inner_text().strip()
-                        # Limpieza estricta: eliminar USD, U$S, $, coma y espacios
-                        p_clean = p_text.upper().replace("USD", "").replace("U$S", "").replace("$", "").replace(",", "").strip()
-                        # Extraer solo numeros y punto decimal
-                        p_clean = ''.join(c for c in p_clean if c.isdigit() or c == '.')
+                        # Extraemos números, puntos y comas
+                        raw_number = re.sub(r'[^\d,\.]', '', p_text)
                         
-                        # En caso de múltiples puntos, conservar el último si funciona como decimal, 
-                        # pero si el formato es solo números, lo parseamos directo.
-                        parts = p_clean.split('.')
+                        # Manejo de comas y puntos (Ejemplo: 1.200,50 vs 1,200.50 vs 189,0)
+                        # Si hay comas y puntos, asumimos el último como decimal
+                        if ',' in raw_number and '.' in raw_number:
+                            if raw_number.rfind(',') > raw_number.rfind('.'):
+                                # Coma es decimal (1.200,50)
+                                raw_number = raw_number.replace('.', '').replace(',', '.')
+                            else:
+                                # Punto es decimal (1,200.50)
+                                raw_number = raw_number.replace(',', '')
+                        elif ',' in raw_number:
+                            # Solo coma, asumimos que es decimal (189,0)
+                            raw_number = raw_number.replace(',', '.')
+                        
+                        # Si quedan múltiples puntos (ej 1.200) y no hay decimal aparente, el punto era mil
+                        # Excepción: si terminan en .00
+                        parts = raw_number.split('.')
                         if len(parts) > 2:
-                            p_clean = ''.join(parts[:-1]) + '.' + parts[-1]
+                            # 1.200.000 -> 1200000
+                            raw_number = ''.join(parts[:-1]) + '.' + parts[-1]
+                        elif len(parts) == 2 and len(parts[1]) == 3:
+                            # Caso ambiguo 1.200 (miles vs decimal con 3 digitos), asumimos miles en AR/UY
+                            raw_number = raw_number.replace('.', '')
                             
-                        price = float(p_clean) if p_clean else 0.0
-                except Exception:
+                        price = float(raw_number) if raw_number else 0.0
+                except Exception as e:
+                    print(f"⚠️ Fallo extrayendo precio: {e}")
                     price = 0.0
 
                 msg_sin_stock = self.page.get_by_text("Sin Stock", exact=False)
@@ -148,7 +165,7 @@ class CDRScraper:
                 name_loc = self.page.locator("h1").first
                 name = name_loc.inner_text().strip() if name_loc.count() > 0 else "Sin Nombre"
                 
-                # Sistema de Respaldo de Imágenes (Fallback)
+                # SISTEMA DE RESPALDO DE IMÁGENES (MULTI-SELECTOR)
                 image_url = ""
                 img_selectors = [
                     ".gallery .picture img",
@@ -162,8 +179,8 @@ class CDRScraper:
                     if img_loc.count() > 0 and img_loc.is_visible():
                         src = img_loc.get_attribute("src")
                         if src:
-                            # Asegurar que la URL sea absoluta
                             if not src.startswith("http"):
+                                # Anteponer dominio local
                                 src = f"https://www.cdrmedios.com{src if src.startswith('/') else '/' + src}"
                             image_url = src
                             break
