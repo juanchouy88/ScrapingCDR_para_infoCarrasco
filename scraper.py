@@ -84,7 +84,7 @@ class CDRScraper:
                 product_urls.append(full_url)
         
         products_data = []
-        print(f"✅ Se encontraron {len(product_urls)} productos en la categoría.")
+        print(f"✅ Se encontraron {len(product_urls)} productos en la URL.")
 
         for link in product_urls:
             try:
@@ -127,30 +127,20 @@ class CDRScraper:
                     price_loc = self.page.locator(".product-price, .price-value-2, .pprecio, span[itemprop='price']").first
                     if price_loc.is_visible():
                         p_text = price_loc.inner_text().strip()
-                        # Extraemos números, puntos y comas
                         raw_number = re.sub(r'[^\d,\.]', '', p_text)
                         
-                        # Manejo de comas y puntos (Ejemplo: 1.200,50 vs 1,200.50 vs 189,0)
-                        # Si hay comas y puntos, asumimos el último como decimal
                         if ',' in raw_number and '.' in raw_number:
                             if raw_number.rfind(',') > raw_number.rfind('.'):
-                                # Coma es decimal (1.200,50)
                                 raw_number = raw_number.replace('.', '').replace(',', '.')
                             else:
-                                # Punto es decimal (1,200.50)
                                 raw_number = raw_number.replace(',', '')
                         elif ',' in raw_number:
-                            # Solo coma, asumimos que es decimal (189,0)
                             raw_number = raw_number.replace(',', '.')
                         
-                        # Si quedan múltiples puntos (ej 1.200) y no hay decimal aparente, el punto era mil
-                        # Excepción: si terminan en .00
                         parts = raw_number.split('.')
                         if len(parts) > 2:
-                            # 1.200.000 -> 1200000
                             raw_number = ''.join(parts[:-1]) + '.' + parts[-1]
                         elif len(parts) == 2 and len(parts[1]) == 3:
-                            # Caso ambiguo 1.200 (miles vs decimal con 3 digitos), asumimos miles en AR/UY
                             raw_number = raw_number.replace('.', '')
                             
                         price = float(raw_number) if raw_number else 0.0
@@ -165,9 +155,10 @@ class CDRScraper:
                 name_loc = self.page.locator("h1").first
                 name = name_loc.inner_text().strip() if name_loc.count() > 0 else "Sin Nombre"
                 
-                # SISTEMA DE RESPALDO DE IMÁGENES (MULTI-SELECTOR)
+                # BUSCADOR DE IMÁGENES ULTRA-ROBUSTO
                 image_url = ""
                 img_selectors = [
+                    ".gal_img_cont img",
                     ".gallery .picture img",
                     "#main-product-img",
                     ".product-essential img",
@@ -180,7 +171,6 @@ class CDRScraper:
                         src = img_loc.get_attribute("src")
                         if src:
                             if not src.startswith("http"):
-                                # Anteponer dominio local
                                 src = f"https://www.cdrmedios.com{src if src.startswith('/') else '/' + src}"
                             image_url = src
                             break

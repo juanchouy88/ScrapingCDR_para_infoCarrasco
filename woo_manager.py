@@ -14,26 +14,18 @@ class WooManager:
     def calculate_price(self, net_price):
         if not net_price: return 0.0
         try:
-            # Fórmula estricta: (net_price * 1.22) * 1.30 y redondea a número entero
+            # Fórmula estricta: (Neto * 1.22) * 1.30 y redondea a entero
             price_with_iva = float(net_price) * 1.22
             final_price = price_with_iva * 1.30
             return round(final_price, 0)
         except: return 0.0
 
-    def get_category_id_by_name(self, name):
-        print(f"🔍 Buscando categoría '{name}' en WooCommerce...")
-        try:
-            res = self.wcapi.get("products/categories", params={"search": name})
-            if res.status_code == 200:
-                cats = res.json()
-                if isinstance(cats, list):
-                    for c in cats:
-                        if isinstance(c, dict) and c.get("name", "").lower() == name.lower():
-                            return c.get("id")
-            return None
-        except: return None
+    # Categorías eliminadas según requerimiento (método ignorado/ausente o comentado)
+    # def get_category_id_by_name(self, name): ...
 
-    def get_all_products(self, category_id=None):
+    def get_all_products(self):
+        # Ahora obtiene el mapa de todos los productos de manera global sin filtro de categoría
+        print("🔍 Recuperando productos globales pre-existentes de WooCommerce...")
         products_map = {}
         page = 1
         while True:
@@ -66,9 +58,9 @@ class WooManager:
             print(f"⚠️ Precio irreal detectado (${final_price_float}) en SKU {sku}. Difiere del neto de ${net_price}. Saltando sincronización de este producto.")
             return False, "Error Precio"
             
+        # BLINDAJE PARA IMÁGENES: Crea igual pero alerta en log
         if not image_url:
-            print(f"⚠️ Sin imagen detectada en SKU {sku}. Saltando para no romper la tienda...")
-            return False, "Sin Imagen"
+            print(f"⚠️ AVISO: Producto SKU {sku} no tiene imagen válida detectada. Se sincronizará de todos modos para revisión.")
 
         mpn = scraped_data.get('mpn', 'N/A')
         in_stock = scraped_data.get('in_stock', True)
@@ -81,19 +73,19 @@ class WooManager:
             "stock_quantity": 10 if in_stock else 0,
             "status": "publish" if in_stock else "draft",
             "catalog_visibility": "visible" if in_stock else "hidden"
+            # CATEGORÍAS ELIMINADAS: NO pasamos `categories`
         }
         
         try:
             if existing_product:
                 self.wcapi.put(f"products/{existing_product['id']}", payload)
             else:
-                payload["images"] = [{"src": image_url}]
-                if scraped_data.get('category_ids'): 
-                    payload["categories"] = [{"id": cid} for cid in scraped_data['category_ids']]
+                if image_url:
+                    payload["images"] = [{"src": image_url}]
                 self.wcapi.post("products", payload)
             
-            # LOG QUIRÚRGICO EXIGIDO
-            print(f"✅ Sincronizado: {sku} | MPN: {mpn} | Neto: ${net_price} | Final: ${final_price_str}")
+            # LOG FINAL EXIGIDO
+            print(f"✅ Sincronizado Global: {sku} | MPN: {mpn} | Precio: ${final_price_str}")
             return True, "Sincronizado"
         except Exception as e:
             print(f"❌ Error sincronizando {sku}: {e}")

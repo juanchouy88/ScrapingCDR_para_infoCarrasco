@@ -11,7 +11,7 @@ except ImportError as e:
     sys.exit(1)
 
 def main():
-    print("🚀 Iniciando Sincronización CDR -> WooCommerce v2.0...")
+    print("🚀 Iniciando Sincronización CDR -> WooCommerce v2.1 (Global)...")
     
     if not getattr(config, 'TARGET_URLS', None):
         print("❌ ERROR: No hay URLs configuradas en TARGET_URLS.")
@@ -35,6 +35,9 @@ def main():
         scraper.stop()
         return
 
+    # Cargar todos los productos de WooCommerce de forma global antes del bucle de URLs
+    existing_products_map = wm.get_all_products()
+
     for url in config.TARGET_URLS:
         try:
             print(f"\n--- 🔎 Procesando URL: {url} ---")
@@ -45,24 +48,11 @@ def main():
                 print(f"⚠️ Error escrapeando {url}: {e}")
                 continue 
 
-            print(f"📂 Categoría detectada: '{cat_name}'")
             print(f"📦 Productos encontrados en proveedor (intentos): {len(products)}")
             
             if not products:
-                print("Total: 0 productos. Saltando sincronización de esta categoría.")
+                print("Total: 0 productos. Saltando sincronización interina.")
                 continue
-
-            cat_id = wm.get_category_id_by_name(cat_name)
-            
-            if not cat_id:
-                print(f"⚠️ AVISO: La categoría '{cat_name}' no existe en tu tienda.")
-            else:
-                print(f"✅ ID Categoría WooCommerce: {cat_id}")
-            
-            if cat_id:
-                existing_products_map = wm.get_all_products(category_id=cat_id)
-            else:
-                existing_products_map = {} 
 
             processed_skus = set()
             new_count = 0
@@ -82,8 +72,7 @@ def main():
                 processed_skus.add(sku)
                 existing = existing_products_map.get(sku)
                 
-                if cat_id:
-                    p_data['category_ids'] = [cat_id]
+                # Cero mapeos de categorías (eliminado)
                 
                 try:
                     success, reason = wm.sync_product(p_data, existing)
@@ -92,13 +81,15 @@ def main():
                             updated_count += 1
                         else:
                             new_count += 1
+                            # Añadir a la lista local para no duplicar si otra URL trae el mismo producto en la misma corrida
+                            existing_products_map[sku] = {'id': 'temp-added', 'sku': sku} 
                     else:
-                        if reason in ["Error", "Sin SKU", "Precio 0"]:
+                        if reason in ["Error", "Sin SKU", "Error Precio"]:
                             skipped_errors += 1
                 except Exception as e:
                     print(f"❌ Error sincronizando SKU {sku}: {e}")
             
-            print(f"\n📊 RESUMEN '{cat_name}':")
+            print(f"\n📊 RESUMEN (Global loop -> {url}):")
             print(f"   ➤ Escrapeados Totales Intento: {len(products)}")
             print(f"   ➤ Nuevos: {new_count}")
             print(f"   ➤ Actualizados: {updated_count}")
@@ -110,7 +101,7 @@ def main():
             traceback.print_exc()
 
     scraper.stop()
-    print("\n✅ Proceso Finalizado Exitosamente (v2.0).")
+    print("\n✅ Proceso Finalizado Exitosamente (v2.1).")
 
 if __name__ == "__main__":
     main()
