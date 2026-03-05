@@ -3,7 +3,9 @@ on:
   schedule:
     - cron: "0 9 * * *"
   workflow_dispatch:
-
+  push:
+    branches:
+      - main
 jobs:
   run-sync:
     runs-on: ubuntu-latest
